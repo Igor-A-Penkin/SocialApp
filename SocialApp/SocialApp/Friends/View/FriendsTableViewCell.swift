@@ -17,6 +17,7 @@ class FriendsTableViewCell: UITableViewCell {
     
     override func awakeFromNib() {
         super.awakeFromNib()
+        DateFormatter.shared.setCommonFormat()
         // Initialization code
     }
 
@@ -26,25 +27,17 @@ class FriendsTableViewCell: UITableViewCell {
         // Configure the view for the selected state
     }
     
-    func configureCell(fullName: String, lastSeen: Int?, occupation: String?, avatar: Data?, online: Int?) {
-        self.friendName.text = fullName
-        self.friendOccupation.text = occupation ?? ""
-        if let avatar = avatar {
-            self.friendImage.image = UIImage(data: avatar)
-        }
-        switch online {
+    func configureCell(for viewModel: FriendViewModel) {
+        self.friendName.text = viewModel.lastName + " " + viewModel.firstName
+        self.friendOccupation.text = viewModel.occupationName
+        self.friendImage.image = viewModel.avatar
+        switch viewModel.online {
         case 1:
             self.friendLastSeen.text = "Online"
             self.friendLastSeen.textColor = .systemGreen
         default:
-            if let lastSeenTime = lastSeen {
-                let date = Date(timeIntervalSince1970: Double(lastSeenTime))
-                let dateFormatter = DateFormatter()
-                dateFormatter.timeStyle = DateFormatter.Style.short //Set time style
-                dateFormatter.dateStyle = DateFormatter.Style.medium //Set date style
-                dateFormatter.timeZone = .current
-                let localDate = dateFormatter.string(from: date)
-                self.friendLastSeen.text = "Last seen " + String(localDate)
+            if let lastSeenTime = viewModel.lastSeen {
+                self.friendLastSeen.text = "Last seen " + DateFormatter.shared.string(from: Date(timeIntervalSince1970: Double(lastSeenTime)))
                 self.friendLastSeen.textColor = .systemGray
             } else {
                 self.friendLastSeen.text = "Deleted or banned profile"

@@ -9,27 +9,32 @@ import UIKit
 
 class NewsTableViewController: UITableViewController {
     
-    let reuseHeaderIdentifier = "NewsHeaderTableViewCell"
-    let reuseTextIdentifier = "NewsTextTableViewCell"
-    let reuseMediaIdentifier = "NewsMediaTableViewCell"
-    let reuseFooterIdentifier = "NewsFooterTableViewCell"
-    
     @IBOutlet weak var newsTableView: UITableView!
+    private let activityIndicator = UIActivityIndicatorView()
     
-    var newsFeed: [News]? = []
-    var newsFeedBiulder = NewsFeedBiulder()
+    private var newsFeed: [News]? = []
+    private var newsFactory = NewsFactory()
+    private let newsCellFactory = NewsCellFactory()
+    private var newsNextFrom = ""
+    private var isLoading: Bool = false
     
     override func viewDidLoad() {
         super.viewDidLoad()
         newsTableView.delegate = self
         newsTableView.dataSource = self
-        // Uncomment the following line to preserve selection between presentations
-        //self.clearsSelectionOnViewWillAppear = false
-        // Uncomment the following line to display an Edit button in the navigation bar for this view controller.
-        //self.navigationItem.rightBarButtonItem = self.editButtonItem
-        downloadNews(fromNext: "")
+        newsTableView.prefetchDataSource = self
+        navigationController?.navigationBar.prefersLargeTitles = true
+        setupRefreshControl()
+        downloadNews(startTime: Int(Date().timeIntervalSince1970), fromNext: newsNextFrom)
     }
     
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if isLoading {
+            startActivityIndicator()
+        }
+    }
+
 
     // MARK: - Table view data source
 
@@ -45,52 +50,34 @@ class NewsTableViewController: UITableViewController {
     
     override func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
         let sectionHeaderView = UIView(frame: CGRect(x: 0, y: 0, width: tableView.frame.width, height: 14))
-        sectionHeaderView.backgroundColor = UIColor.systemGray5
+        sectionHeaderView.backgroundColor = .systemGray5
         return sectionHeaderView
     }
     
-    /*
-    override func tableView(_ tableView: UITableView, viewForFooterInSection section: Int) -> UIView? {
-        let sectionFooterView = UIView(frame: CGRect(x: 0, y: 0, width: tableView.frame.width, height: 16))
-        sectionFooterView.backgroundColor = UIColor.systemGray6
-        return sectionFooterView
-    }
-    */
-    
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let news = newsFeed?[indexPath.section]
         switch indexPath.row {
         case 0: // Header
-            let cell = tableView.dequeueReusableCell(withIdentifier: reuseHeaderIdentifier, for: indexPath) as! NewsHeaderTableViewCell
-            //let author = self.matchPostAuthor(authorID: newsFeed?.items?[indexPath.section].source_id, postSection: indexPath.section)
-            cell.configureCell(avatar: newsFeed?[indexPath.section].avatar, author: newsFeed?[indexPath.section].author, time: newsFeed?[indexPath.section].time)
-            return cell
+            return newsCellFactory.buildCell(for: .header, news, tableView, indexPath)
         case 1: // Text
-            let cell = tableView.dequeueReusableCell(withIdentifier: reuseTextIdentifier, for: indexPath) as! NewsTextTableViewCell
-            cell.configureCell(text: newsFeed?[indexPath.section].text)
-            return cell
+            return newsCellFactory.buildCell(for: .text, news, tableView, indexPath)
         case 2: // Photos
-            let cell = tableView.dequeueReusableCell(withIdentifier: reuseMediaIdentifier, for: indexPath) as! NewsMediaTableViewCell
-            cell.imagesArray = newsFeed?[indexPath.section].photos
-            cell.mediaCollectionView.reloadData()
-            return cell
+            return newsCellFactory.buildCell(for: .media, news, tableView, indexPath)
         case 3: // Footer
-            let cell = tableView.dequeueReusableCell(withIdentifier: reuseFooterIdentifier, for: indexPath) as! NewsFooterTableViewCell
-            cell.configureCell(likes: newsFeed?[indexPath.section].likeCount, comments: newsFeed?[indexPath.section].commentCount, reviews: newsFeed?[indexPath.section].reviewCount, userLiked: newsFeed?[indexPath.section].liked)
-            cell.likeButton.tag = indexPath.section
-            return cell
+            return newsCellFactory.buildCell(for: .footer, news, tableView, indexPath)
         default:
-            print("\nINFO: What the hell was here!? o_O\n")
-            let cell = tableView.dequeueReusableCell(withIdentifier: reuseHeaderIdentifier, for: indexPath) as! NewsHeaderTableViewCell
-            return cell
+            // Probably will never happens
+            print("\nINFO: Admin was drunk o_O\n")
+            return newsCellFactory.buildCell(for: .stock, news, tableView, indexPath)
         }
     }
     
     override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
         switch indexPath.row {
         case 2:
-            if 0 == newsFeed?[indexPath.section].photosURL?.count ?? 0 {
+            if 0 == newsFeed?[indexPath.section].photos?.count ?? 0 {
                 return 0
-            } else if 1 == newsFeed?[indexPath.section].photosURL?.count ?? 0 {
+            } else if 1 == newsFeed?[indexPath.section].photos?.count ?? 0 {
                 return tableView.frame.width
             } else {
                 return tableView.frame.width/2
@@ -115,73 +102,86 @@ class NewsTableViewController: UITableViewController {
         }
     }
     
+
+}
+
+extension NewsTableViewController: UITableViewDataSourcePrefetching {
     
-    /*
-    // Override to support conditional editing of the table view.
-    override func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {
-        // Return false if you do not want the specified item to be editable.
-        return true
+    func tableView(_ tableView: UITableView, prefetchRowsAt indexPaths: [IndexPath]) {
+        guard let maxSection = indexPaths.map({ $0.section }).max() else { return }
+        if maxSection > (newsFeed ?? []).count-2, !isLoading {
+            isLoading = true
+            NetworkManager.newsfeedGet(for: UserSession.instance.userId!, nextFrom: newsNextFrom, completion: { response in
+                guard let response = response,
+                      let posts = response.items,
+                      let nextFrom = response.next_from
+                else {
+                    print("\nINFO: ERROR - While getting respone objects in \(#function)\n")
+                    return
+                }
+                self.newsNextFrom = nextFrom
+                print("\nINFO: \(#function) has total parsed posts: \(posts.count)")
+                let shownNewsCount = (self.newsFeed ?? []).count
+                print("\nINFO: \(#function) has total shown posts: \(shownNewsCount)")
+                self.newsFeed?.append(contentsOf: NewsFactory().buildNewsFeed(parsedJSON: response))
+                print("\nINFO: \(#function) has total after adding posts: \((self.newsFeed ?? []).count)")
+                let indexSetOfNewPosts = IndexSet(integersIn: shownNewsCount ..< (self.newsFeed ?? []).count)
+                print("\nINFO: \(#function) has added posts sections set: \((self.newsFeed ?? []).count)")
+                self.newsTableView.performBatchUpdates({
+                    self.newsTableView.insertSections(indexSetOfNewPosts, with: .automatic)
+                }, completion: nil)
+                self.isLoading = false
+                self.downloadMedia()
+            })
+        }
     }
-    */
-
-    /*
-    // Override to support editing the table view.
-    override func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
-        if editingStyle == .delete {
-            // Delete the row from the data source
-            tableView.deleteRows(at: [indexPath], with: .fade)
-        } else if editingStyle == .insert {
-            // Create a new instance of the appropriate class, insert it into the array, and add a new row to the table view
-        }    
+        
+    func tableView(_ tableView: UITableView, cancelPrefetchingForRowsAt indexPaths: [IndexPath]) {
+        print("\nINFO: User SCROLLING was canceled...")
     }
-    */
-
-    /*
-    // Override to support rearranging the table view.
-    override func tableView(_ tableView: UITableView, moveRowAt fromIndexPath: IndexPath, to: IndexPath) {
-
-    }
-    */
-
-    /*
-    // Override to support conditional rearranging of the table view.
-    override func tableView(_ tableView: UITableView, canMoveRowAt indexPath: IndexPath) -> Bool {
-        // Return false if you do not want the item to be re-orderable.
-        return true
-    }
-    */
-
-    /*
-    // MARK: - Navigation
-
-    // In a storyboard-based application, you will often want to do a little preparation before navigation
-    override func prepare(for segue: UIStoryboardSegue, sender: Any?) {
-        // Get the new view controller using segue.destination.
-        // Pass the selected object to the new view controller.
-    }
-    */
-
+    
 }
 
 extension NewsTableViewController {
     
-    func downloadNews(fromNext: String) {
-        NetworkManager.newsfeedGet(for: UserSession.instance.userId!, nextFrom: fromNext, completion: { response in
-            guard let response = response,
-                  let posts = response.items
-            else {
-                print("\nINFO: ERROR - While getting respone objects in \(#function)\n")
-                return
-            }
-            print("\nINFO: \(#function) has total parsed posts: \(posts.count)")
-            self.biuldNewsFeed(newsFeed: response)
-        })
+    func startActivityIndicator() {
+        print("\nINFO: Loading \(self.description) has begun.")
+        activityIndicator.center.x = (self.navigationController?.navigationBar.center.x)!
+        activityIndicator.center.y = (self.navigationController?.navigationBar.center.y)!*0.75
+        activityIndicator.startAnimating()
+        activityIndicator.hidesWhenStopped = true
+        activityIndicator.style = .large
+        self.navigationController?.view.addSubview(activityIndicator)
+    }
+    
+    func stopActivityIndicator() {
+        self.activityIndicator.stopAnimating()
+        self.activityIndicator.isHidden = true
+        isLoading = false
+    }
+    
+    func downloadNews(startTime: Int, fromNext: String) {
+        isLoading = true
+        DispatchQueue.global().sync {
+            NetworkManager.newsfeedGet(for: UserSession.instance.userId!, startTime: Int(Date().timeIntervalSince1970+1), nextFrom: fromNext, completion: { response in
+                guard let response = response,
+                      let posts = response.items
+                else {
+                    print("\nINFO: ERROR - While getting respone objects in \(#function)\n")
+                    return
+                }
+                if let nextFrom = response.next_from {
+                    self.newsNextFrom = nextFrom
+                } else { print("\nINFO: ERROR - While getting NEXT_FROM property in \(#function), next_from = \(response.next_from ?? "")\n") }
+                print("\nINFO: \(#function) has total parsed posts: \(posts.count)")
+                self.biuldNewsFeed(newsFeed: response)
+            })
+        }
     }
     
     func biuldNewsFeed(newsFeed response: PostResponse) {
-        self.newsFeed = self.newsFeedBiulder.buildNewsFeed(parsedJSON: response)
+        self.newsFeed = self.newsFactory.buildNewsFeed(parsedJSON: response)
         print("\nINFO: \(#function) has total built news: \(newsFeed?.count ?? 0)")
-        self.newsTableView.reloadData()
         downloadMedia()
     }
     
@@ -200,29 +200,45 @@ extension NewsTableViewController {
                 self.newsTableView.reloadData()
             }
         }
-        
         DispatchQueue.global().async {
             print("\nINFO: \(#function) Starting downloading photos for NewsFeed.")
             for news in self.newsFeed! {
-                print("\nINFO: Trying downloading photos for \(news.author ?? "") with \(news.photosURL?.count ?? 0) URLs.")
-                if let urlStrings = news.photosURL {
+//                print("\nINFO: Trying downloading photos for \(news.author ?? "") with \(news.photosURL?.count ?? 0) URLs.")
+                if (news.photos?.isEmpty ?? false),
+                   let urlStrings = news.photosURL {
                     for urlString in urlStrings {
-                        if let url = URL(string: urlString) {
-                            if let data = try? Data(contentsOf: url) {
-                                print("INFO: Downloaded photo from: \(url.absoluteString)")
-                                news.photos?.append(data)
-                            }
+                        if let url = URL(string: urlString),
+                           let data = try? Data(contentsOf: url) {
+//                            print("INFO: Downloaded photo from: \(url.absoluteString)")
+                            news.photos?.append(data)
                         }
                     }
                 }
-                print("\n\n\nINFO: Downloaded photos for \(news.author!) with \(news.photos?.count ?? 0) photos.")
+//                print("\n\n\nINFO: Downloaded photos for \(news.author!) with \(news.photos?.count ?? 0) photos.")
             }
             DispatchQueue.main.async {
                 print("\nINFO: \(#function) Reloading data after downloading photos.")
                 self.newsTableView.reloadData()
+                self.stopActivityIndicator()
             }
         }
         
     }
-
+    
+    override func refreshData() {
+        refreshControl?.beginRefreshing()
+        let mostFreshNewsDate: Int = newsFeed?.first?.time ?? Int(Date().timeIntervalSince1970)
+        NetworkManager.newsfeedGet(for: UserSession.instance.userId!, startTime: mostFreshNewsDate+1, nextFrom: "") { [weak self] response in
+            self?.refreshControl?.endRefreshing()
+            guard let response = response else {
+                print("\nINFO: ERROR - While getting respone objects in \(#function)\n")
+                return
+            }
+            let freshNews = NewsFactory().buildNewsFeed(parsedJSON: response)
+            self?.newsFeed = freshNews + (self?.newsFeed ?? [])
+            self?.newsTableView.reloadData()
+            self?.downloadMedia()
+        }
+    }
+    
 }

@@ -1,29 +1,15 @@
 //
-//  NewsFeed.swift
+//  NewsFactory.swift
 //  SocialApp
 //
-//  Created by Игорь Пенкин on 18.10.2020.
+//  Created by Игорь Пенкин on 08.03.2021.
 //
 
 import Foundation
-import UIKit
 
-class News {
-    var avatar: Data?
-    var avatarURL: String?
-    var author: String?
-    var time: Int?
-    var text: String?
-    var photos: [Data]? = []
-    var photosURL: [String]? = []
-    var likeCount: Int?
-    var commentCount: Int?
-    var reviewCount: Int?
-    var liked: Int?
-}
-
-class NewsFeedBiulder {
-    var newsFeed: [News]
+class NewsFactory {
+    
+    private var newsFeed: [News]
     //private var news: News?
     
     init() {
@@ -67,12 +53,13 @@ class NewsFeedBiulder {
             return news
         }
         for attachment in attachments {
-            news.photosURL?.append((attachment.photo?.sizes.first?.url) ?? "")
-            print("\nINFO: News posted by \(news.author ?? "Unknown") has been added Photo's url: \(attachment.photo?.sizes.first?.url ?? "NO URL")")
-            print("INFO: News posted by \(news.author!) has \(news.photosURL?.count ?? 0) URLs")
+            if let attachedURL = attachment.photo?.sizes.filter { $0.type == "p" }.first {
+                news.photosURL?.append(attachedURL.url!)
+            } else {
+                news.photosURL?.append(attachment.photo?.sizes.first?.url ?? "")
+            }
         }
         return news
     }
     
 }
-
